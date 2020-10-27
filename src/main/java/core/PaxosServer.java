@@ -1,8 +1,8 @@
 package core;
 
 import Network.NetworkPacket.Packet;
-import Network.NetworkPacket.Role;
 import Network.NioRecv;
+import Network.NioSend;
 import Network.Recv;
 import conf.Node;
 import conf.NodeSet;
@@ -14,17 +14,22 @@ public class PaxosServer {
     private NodeSet nodeSet;
     private Proposer proposer;
     private Acceptor acceptor;
+    private Learner learner;
     private Recv recv;
-    private StateMachineCallback stateMachineCallback;
+    private NetUtil netUtil;
 
     public PaxosServer(int id,StateMachineCallback stateMachineCallback) throws IOException {
         this.id=id;
         nodeSet=NodeSet.read_from_file("conf/nodes.json");
-        proposer = new Proposer(id,nodeSet);
-        acceptor = new Acceptor(id,nodeSet);
+        assert nodeSet != null;
+        netUtil=new NetUtil(nodeSet,new NioSend());
+        proposer = new Proposer(id,nodeSet,netUtil);
+        acceptor = new Acceptor(id,netUtil);
+        learner=new Learner(id,nodeSet,acceptor,stateMachineCallback);
+
         Node node=nodeSet.getNodes().get(id);
         recv=new NioRecv(node.getIp(),node.getPort());
-        this.stateMachineCallback=stateMachineCallback;
+
     }
 
     public void start(){
@@ -49,8 +54,12 @@ public class PaxosServer {
                         case Acceptor:
                             acceptor.put_packet(packet);
                             break;
+                        case Learner:
+                            learner.put_packet(packet);
+                            break;
                         default:
                             System.out.println("receive role error:"+packet.getReceive_role());
+                            System.out.println(packet);
                     }
                 }
             }

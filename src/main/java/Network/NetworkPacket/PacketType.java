@@ -1,5 +1,8 @@
 package Network.NetworkPacket;
 
 public enum PacketType {
-    PrepareRequest,PrepareResponse,AcceptRequest,AcceptResponse,SubmitValue
+    SubmitValue,
+    PrepareRequest,PrepareResponse,
+    AcceptRequest,AcceptResponse,
+    LearnRequest,LearnResponse
 }

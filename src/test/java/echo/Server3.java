@@ -1,12 +1,12 @@
-package kv_db;
+package echo;
 
 import core.PaxosServer;
 
 import java.io.IOException;
 
-public class Server1 {
+public class Server3 {
     public static void main(String[] args) throws IOException {
-        PaxosServer paxosServer=new PaxosServer(0,new KVcallback());
+        PaxosServer paxosServer=new PaxosServer(2,new EchoCallback());
         paxosServer.start();
     }
 }

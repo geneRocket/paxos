@@ -1,10 +1,7 @@
 package core;
 
 import Network.NetworkPacket.*;
-import Network.NonBlockSend;
-import Network.Send;
-import conf.Node;
-import conf.NodeSet;
+
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -13,11 +10,9 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 public class Acceptor {
     int acceptor_id;
-    NodeSet nodeSet;
 
     BlockingQueue<Packet> packet_queue = new LinkedBlockingQueue<>();
-    Send send= new NonBlockSend();
-
+    NetUtil netUtil;
 
     static class Instance{
         int prepare_ballot;
@@ -32,10 +27,9 @@ public class Acceptor {
     HashMap<Integer, Instance> instance_record = new HashMap<>(); //instance idx -> instance
 
 
-    public Acceptor(int id,NodeSet nodeSet) throws IOException {
+    public Acceptor(int id,NetUtil netUtil) throws IOException {
         this.acceptor_id =id;
-        this.nodeSet=nodeSet;
-
+        this.netUtil=netUtil;
         new Thread(()->{
             while (true){
                 try {
@@ -60,11 +54,12 @@ public class Acceptor {
 
             if(instance.prepare_ballot < prepareRequest.getBallot()){
                 instance.prepare_ballot = prepareRequest.getBallot();
+                //如果Acceptor已经接受过提案，那么就向Proposer响应已经接受过的编号小于N的最大编号的提案
                 responsePrepare(prepareRequest.getProposer_id(),true,prepareRequest.getInstance(),instance.prepare_ballot,instance.accept_ballot);
             }
             else {
                 //可忽略
-                responsePrepare(prepareRequest.getProposer_id(),false,prepareRequest.getInstance(),instance.prepare_ballot,instance.accept_ballot);
+                //responsePrepare(prepareRequest.getProposer_id(),false,prepareRequest.getInstance(),instance.prepare_ballot,instance.accept_ballot);
             }
         }
     }
@@ -76,21 +71,37 @@ public class Acceptor {
         prepareResponse.setInstance(instance);
         prepareResponse.setBallot(ballot);
         prepareResponse.setAccept_ballot(accept_ballot);
-        send_to(proposer_id,Role.Proposer,PacketType.PrepareResponse,prepareResponse);
+        this.netUtil.send_to(proposer_id,Role.Proposer,PacketType.PrepareResponse,prepareResponse);
     }
 
     void onAccept(AcceptRequest acceptRequest){
-        if(instance_record.containsKey(acceptRequest.getInstance())){
-            Instance instance=instance_record.get(acceptRequest.getInstance());
-
-            if(instance.prepare_ballot != acceptRequest.getBallot()){
-                responseAccept(acceptRequest.getProposer_id(),acceptRequest.getInstance(),instance.prepare_ballot,false);
-            }
-            else {
-                instance.value=acceptRequest.getValue();
-                responseAccept(acceptRequest.getProposer_id(),acceptRequest.getInstance(),instance.prepare_ballot,true);
-            }
+        //接受Accept请求的Acceptor集合不一定是之前响应Prepare请求的Acceptor集合
+        if(!instance_record.containsKey(acceptRequest.getInstance())) {
+            Instance instance=new Instance(acceptRequest.getBallot());
+            instance_record.put(acceptRequest.getInstance(),instance);
         }
+
+        Instance instance=instance_record.get(acceptRequest.getInstance());
+
+        if(instance.prepare_ballot > acceptRequest.getBallot()){
+            responseAccept(acceptRequest.getProposer_id(),acceptRequest.getInstance(),instance.prepare_ballot,false);
+        }
+        else {
+            instance.value=acceptRequest.getValue();
+            instance.prepare_ballot=acceptRequest.getBallot();
+            instance.accept_ballot=acceptRequest.getBallot();
+            responseAccept(acceptRequest.getProposer_id(),acceptRequest.getInstance(),instance.prepare_ballot,true);
+            sendLearnResponse(acceptor_id,acceptRequest.getInstance(),acceptRequest.getValue());
+        }
+
+    }
+
+    void sendLearnResponse(int acceptor_id,int instance,Object value){
+        LearnResponse learnResponse=new LearnResponse();
+        learnResponse.setAcceptor_id(acceptor_id);
+        learnResponse.setInstance(instance);
+        learnResponse.setValue(value);
+        this.netUtil.boardcast(Role.Learner,PacketType.LearnResponse,learnResponse);
     }
 
     void responseAccept(int proposer_id,int instance,int ballot,boolean is_scccess){
@@ -100,26 +111,8 @@ public class Acceptor {
         acceptResponse.setBallot(ballot);
         acceptResponse.setOk(is_scccess);
 
-        send_to(proposer_id,Role.Proposer,PacketType.AcceptResponse,acceptResponse);
+        this.netUtil.send_to(proposer_id,Role.Proposer,PacketType.AcceptResponse,acceptResponse);
     }
-
-
-
-    void send_to(int id, Role receive_role,PacketType type, Object data){
-        Packet packet=new Packet();
-        packet.setReceive_role(receive_role);
-        packet.setType(type);
-        packet.setData(data);
-
-        Node node=nodeSet.getNodes().get(id);
-        try {
-            send.send_to(node.getIp(),node.getPort(),packet);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-
 
     void handle_packet(Packet packet){
         switch (packet.getType()){

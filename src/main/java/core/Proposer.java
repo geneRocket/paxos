@@ -7,9 +7,8 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Semaphore;
 
 import Network.NetworkPacket.*;
-import Network.NonBlockSend;
+import Network.NioSend;
 import Network.Send;
-import conf.Node;
 import conf.NodeSet;
 import lombok.ToString;
 
@@ -18,23 +17,25 @@ public class Proposer {
     NodeSet nodeSet;
 
     BlockingQueue<Packet> packet_queue = new LinkedBlockingQueue<>();
-    Send send = new NonBlockSend();
+    Send send = new NioSend();
 
     BlockingQueue<Object> wait_to_submit_value_queue = new LinkedBlockingQueue<>();
     Object submiting_value = null;
     Semaphore submit_success_semaphore = new Semaphore(0);
 
     Timer timer = new Timer();
-    final int delay = 1000;
+    final int delay = 100;
 
     final int start_ballot = 1;
     int current_instance = 0;
+    NetUtil netUtil;
 
     HashMap<Integer, Instance> instance_record = new HashMap<>(); //instance idx -> instance
 
-    public Proposer(int id, NodeSet nodeSet) throws IOException {
+    public Proposer(int id, NodeSet nodeSet,NetUtil netUtil) throws IOException {
         this.proposer_id = id;
         this.nodeSet = nodeSet;
+        this.netUtil=netUtil;
 
         new Thread(() -> {
             while (true) {
@@ -51,7 +52,7 @@ public class Proposer {
             while (true) {
                 try {
                     submiting_value = wait_to_submit_value_queue.take();
-                    before_prepare();
+                    new_instance();
                     submit_success_semaphore.acquire();
                 } catch (InterruptedException e) {
                     break;
@@ -80,10 +81,9 @@ public class Proposer {
     }
 
 
-    void before_prepare() {
+    void new_instance() {
         this.current_instance++;
         Instance instance = new Instance(start_ballot);
-
 
         instance.instance_state = Instance_State.prepare;
         instance_record.put(this.current_instance, instance);
@@ -98,7 +98,7 @@ public class Proposer {
         prepareRequest.setInstance(this.current_instance);
         prepareRequest.setBallot(instance.ballot);
 
-        boardcast(Role.Acceptor, PacketType.PrepareRequest, prepareRequest);
+        this.netUtil.boardcast(Role.Acceptor, PacketType.PrepareRequest, prepareRequest);
 
         delay_exec(new TimerTask() {
             @Override
@@ -129,20 +129,18 @@ public class Proposer {
         if (prepareResponse.isOk()) {
             instance.prepare_acceptor_id_set.add(prepareResponse.getAcceptor_id());
 
-
+            //V是所有的响应中编号最大的提案的Value。如果所有的响应中都没有提案，那么此时V就可以由Proposer自己选择。
+            //没必要重复提交相同的V，所以new_instance
             if (prepareResponse.getAccept_ballot() > instance.accept_ballot) {
                 instance.accept_ballot = prepareResponse.getAccept_ballot();
-
                 instance.instance_state = Instance_State.finish;
-                before_prepare();
+                new_instance();
                 return;
             }
 
             if (instance.prepare_acceptor_id_set.size() >= (nodeSet.getNodes().size() / 2 + 1)) {
-
-                if (instance.accept_ballot == 0) {
-                    accept(prepareResponse.getInstance());
-                }
+                assert instance.accept_ballot==0;
+                accept(prepareResponse.getInstance());
             }
         }
 
@@ -160,7 +158,7 @@ public class Proposer {
         acceptRequest.setBallot(instance.ballot);
         acceptRequest.setValue(instance.value);
 
-        boardcast(Role.Acceptor, PacketType.AcceptRequest, acceptRequest);
+        this.netUtil.boardcast(Role.Acceptor, PacketType.AcceptRequest, acceptRequest);
 
         delay_exec(new TimerTask() {
             @Override
@@ -201,23 +199,7 @@ public class Proposer {
         }
     }
 
-    void boardcast(Role receive_role, PacketType type, Object data) {
 
-        Packet packet = new Packet();
-        packet.setReceive_role(receive_role);
-        packet.setType(type);
-        packet.setData(data);
-
-        int n_nodes = nodeSet.getNodes().size();
-        for (int i = 0; i < n_nodes; i++) {
-            Node node = nodeSet.getNodes().get(i);
-            try {
-                send.send_to(node.getIp(), node.getPort(), packet);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
-    }
 
     void handle_packet(Packet packet) {
         switch (packet.getType()) {

@@ -3,12 +3,13 @@ package core;
 import Network.NetworkPacket.Packet;
 import Network.NetworkPacket.PacketType;
 import Network.NetworkPacket.Role;
-import Network.NonBlockSend;
+import Network.NioSend;
 import Network.Send;
 import conf.Node;
 import conf.NodeSet;
 
 import java.io.IOException;
+import java.util.Random;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -19,8 +20,9 @@ public class PaxosClinet {
 
     NodeSet nodeSet;
 
+
     public PaxosClinet() throws IOException {
-        send=new NonBlockSend();
+        send=new NioSend();
         nodeSet=NodeSet.read_from_file("conf/nodes.json");
     }
 
@@ -39,7 +41,6 @@ public class PaxosClinet {
         packet.setReceive_role(Role.Proposer);
         packet.setType(PacketType.SubmitValue);
         packet.setData(msg_queue);
-
         Node node=nodeSet.getNodes().get(0);
 
         try {

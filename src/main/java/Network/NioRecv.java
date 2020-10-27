@@ -24,7 +24,7 @@ public class NioRecv implements Recv {
     ServerSocketChannel serverSocketChannel;
     private Map<SocketChannel, ByteArrayOutputStream> buffer_map = new HashMap<>();
     ByteBuffer byteBuffer = ByteBuffer.allocate(1024);
-    BlockingQueue<byte[]> msg_queue= new LinkedBlockingQueue<byte[]>();
+    BlockingQueue<byte[]> msg_queue= new LinkedBlockingQueue<>();
 
     public NioRecv(String ip,int port) throws IOException {
         this.ip=ip;
@@ -46,8 +46,7 @@ public class NioRecv implements Recv {
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
-                    Set<SelectionKey> selectionKeySet=selector.selectedKeys();
-                    Iterator<SelectionKey> iter=selectionKeySet.iterator();
+                    Iterator<SelectionKey> iter=selector.selectedKeys().iterator();;
 
                     while(iter.hasNext()){
                         SelectionKey selectionKey =iter.next();
@@ -61,7 +60,8 @@ public class NioRecv implements Recv {
                         }
                         else if(selectionKey.isReadable()){
                             SocketChannel socketChannel=(SocketChannel)selectionKey.channel();
-                            read_data(socketChannel);
+                            if(read_data(socketChannel)==-1)
+                                selectionKey.cancel();
                         }
                     }
 
@@ -70,7 +70,7 @@ public class NioRecv implements Recv {
         }).start();
     }
 
-    void read_data(SocketChannel socketChannel){
+    int read_data(SocketChannel socketChannel){
         try {
             int len=socketChannel.read(byteBuffer);
             if(len==-1){
@@ -80,6 +80,7 @@ public class NioRecv implements Recv {
                 }
                 buffer_map.remove(socketChannel);
                 socketChannel.close();
+                return -1;
             }
             if(!buffer_map.containsKey(socketChannel)){
                 buffer_map.put(socketChannel,new ByteArrayOutputStream());
@@ -87,11 +88,12 @@ public class NioRecv implements Recv {
             byteBuffer.flip();
             buffer_map.get(socketChannel).write(byteBuffer.array());
             byteBuffer.clear();
+            return len;
         } catch (IOException e) {
             e.printStackTrace();
         }
 
-
+        return -1;
     }
 
     void handle_accept() throws IOException {

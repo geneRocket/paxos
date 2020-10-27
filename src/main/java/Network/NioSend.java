@@ -10,14 +10,15 @@ import java.nio.channels.SocketChannel;
 import java.util.Iterator;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class NonBlockSend implements Send {
+public class NioSend implements Send {
 
-    private static int int_size=4;
+    private int int_size=4;
     private Selector selector;
     private ConcurrentHashMap<SocketChannel, ByteBuffer> to_send_buffer = new ConcurrentHashMap<>();
 
-    public NonBlockSend() throws IOException {
+    public NioSend() throws IOException {
         selector=Selector.open();
+
         new Thread(() -> {
             while (true){
                 try {
@@ -42,9 +43,10 @@ public class NonBlockSend implements Send {
                         }
                     }
                     else if(key.isWritable()){
-                        key.interestOps(key.interestOps() & (~ SelectionKey.OP_WRITE));
+                        //key.interestOps(key.interestOps() & (~ SelectionKey.OP_WRITE));
                         try {
                             writeData(socketChannel);
+                            key.cancel();
                         } catch (IOException e) {
                             e.printStackTrace();
                         }
@@ -61,7 +63,6 @@ public class NonBlockSend implements Send {
         assert byteBuffer.remaining()==0;
         to_send_buffer.remove(socketChannel);
         socketChannel.close();
-
     }
 
 
