@@ -21,7 +21,7 @@ public class Learner {
     Acceptor acceptor;
     StateMachineCallback stateMachineCallback;
 
-    HashMap<Integer,HashMap<Object,Integer>> instance_value_count = new HashMap<>();
+    HashMap<Integer,HashMap<Value,Integer>> instance_value_count = new HashMap<>();
 
     HashMap<Integer,Object> accpted_values = new HashMap<>();
 
@@ -69,18 +69,22 @@ public class Learner {
         if(!instance_value_count.containsKey(learnResponse.getInstance())){
             instance_value_count.put(learnResponse.getInstance(),new HashMap<>());
         }
-        HashMap<Object,Integer> value_count= instance_value_count.get(learnResponse.getInstance());
-        Object value=learnResponse.getValue();
+        HashMap<Value,Integer> value_count= instance_value_count.get(learnResponse.getInstance());
+        Value value=learnResponse.getValue();
+
         if(!value_count.containsKey(value)){
             value_count.put(value,0);
         }
+
         value_count.put(value,value_count.get(value)+1);
 
         if(value_count.get(value)>=(nodeSet.getNodes().size()/2+1)){
             accpted_values.put(learnResponse.getInstance(),value);
             if(current_instance==learnResponse.getInstance()){
                 current_instance++;
-                stateMachineCallback.callback(value);
+                for (Object objet: value.getQueue()) {
+                    stateMachineCallback.callback(objet);
+                }
             }
         }
     }

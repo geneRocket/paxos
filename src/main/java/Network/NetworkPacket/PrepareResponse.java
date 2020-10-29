@@ -5,6 +5,7 @@ import lombok.Setter;
 import lombok.ToString;
 
 import java.io.Serializable;
+import java.util.UUID;
 
 @Getter
 @Setter
@@ -14,5 +15,6 @@ public class PrepareResponse implements Serializable {
     int instance;
     int ballot;
     int accept_ballot;
+    Value value;
     boolean ok;
 }

@@ -13,5 +13,5 @@ public class AcceptRequest implements Serializable {
     int proposer_id;
     int instance;
     int ballot;
-    Object value;
+    Value value;
 }

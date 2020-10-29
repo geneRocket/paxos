@@ -5,32 +5,30 @@ import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 import Network.NetworkPacket.*;
-import Network.NioSend;
-import Network.Send;
 import conf.NodeSet;
 import lombok.ToString;
+
 
 public class Proposer {
     int proposer_id;
     NodeSet nodeSet;
 
     BlockingQueue<Packet> packet_queue = new LinkedBlockingQueue<>();
-    Send send = new NioSend();
 
-    BlockingQueue<Object> wait_to_submit_value_queue = new LinkedBlockingQueue<>();
-    Object submiting_value = null;
-    Semaphore submit_success_semaphore = new Semaphore(0);
-
-    Timer timer = new Timer();
-    final int delay = 100;
-
-    final int start_ballot = 1;
-    int current_instance = 0;
     NetUtil netUtil;
 
-    HashMap<Integer, Instance> instance_record = new HashMap<>(); //instance idx -> instance
+    BlockingQueue<Value> wait_to_submit_value_queue = new LinkedBlockingQueue<>();
+    Value submiting_value = null;
+
+    static final int delay = 2000;
+    static final int default_delay=9999999;
+    DelayExecRecord delayExecRecord=new DelayExecRecord(default_delay);
+
+    int current_instance = 0;
+    Instance instance= new Instance();
 
     public Proposer(int id, NodeSet nodeSet,NetUtil netUtil) throws IOException {
         this.proposer_id = id;
@@ -39,26 +37,44 @@ public class Proposer {
 
         new Thread(() -> {
             while (true) {
-                try {
-                    Packet packet = packet_queue.take();
-                    handle_packet(packet);
-                } catch (InterruptedException e) {
-                    break;
+                long time_left=delayExecRecord.get_next_time_left();
+                if(time_left<=0){
+                    DelayExecRecord.TimeObject timeObject = delayExecRecord.take_soonest_delay_exec();
+                    if(timeObject!=null){
+                        switch (timeObject.eventType){
+                            case PrepareCheck:
+                                prepare_check(timeObject.instance_id);
+                                break;
+                            case AcceptCheck:
+                                accept_delay(timeObject.instance_id);
+                                break;
+                            default:
+                                System.err.println("event Type error");
+                        }
+                    }
                 }
+
+                if(submiting_value==null && wait_to_submit_value_queue.size()>0){
+                    try {
+                        submiting_value = wait_to_submit_value_queue.take();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                    new_instance();
+                }
+
+                time_left=delayExecRecord.get_next_time_left();
+                Packet packet = null;
+                try {
+                    packet = packet_queue.poll(time_left, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                if(packet!=null)
+                    handle_packet(packet);
             }
         }).start();
 
-        new Thread(() -> {
-            while (true) {
-                try {
-                    submiting_value = wait_to_submit_value_queue.take();
-                    new_instance();
-                    submit_success_semaphore.acquire();
-                } catch (InterruptedException e) {
-                    break;
-                }
-            }
-        }).start();
     }
 
     enum Instance_State {
@@ -67,32 +83,40 @@ public class Proposer {
 
     @ToString
     static class Instance {
-        Instance_State instance_state = Instance_State.init;
+        static final int start_ballot = 1;
+
+        Instance_State instance_state;
 
         int ballot;
         Set<Integer> prepare_acceptor_id_set = new HashSet<>();
-        int accept_ballot = 0;
-        Object value = null;
+
+        int accept_ballot;
+        Value value;
         Set<Integer> accept_acceptor_id_set = new HashSet<>();
 
-        public Instance(int ballot) {
-            this.ballot = ballot;
+        public Instance() {
+            reset();
+        }
+
+        public void reset(){
+            instance_state = Instance_State.init;
+            ballot=start_ballot;
+            prepare_acceptor_id_set.clear();
+            accept_ballot = 0;
+            value=null;
+            accept_acceptor_id_set.clear();
         }
     }
 
 
     void new_instance() {
         this.current_instance++;
-        Instance instance = new Instance(start_ballot);
-
+        instance.reset();
         instance.instance_state = Instance_State.prepare;
-        instance_record.put(this.current_instance, instance);
-        prepare(current_instance);
+        prepare();
     }
 
-    void prepare(int instance_idx) {
-        Instance instance = instance_record.get(instance_idx);
-
+    void prepare() {
         PrepareRequest prepareRequest = new PrepareRequest();
         prepareRequest.setProposer_id(proposer_id);
         prepareRequest.setInstance(this.current_instance);
@@ -100,81 +124,85 @@ public class Proposer {
 
         this.netUtil.boardcast(Role.Acceptor, PacketType.PrepareRequest, prepareRequest);
 
-        delay_exec(new TimerTask() {
-            @Override
-            public void run() {
-                if (instance.instance_state == Instance_State.prepare) {
-                    instance.ballot++;
-                    instance.prepare_acceptor_id_set.clear();
-                    prepare(instance_idx);
-                }
-            }
-        });
-
+        delay_exec(DelayExecRecord.EventType.PrepareCheck,current_instance);
     }
 
-    void delay_exec(TimerTask timerTask) {
-        timer.schedule(timerTask, delay);
+    void prepare_check(int instance_idx){
+        //prepare
+        if(instance_idx!=current_instance)
+            return;
+
+        if (instance.instance_state == Instance_State.prepare) {
+            instance.ballot++;
+            instance.prepare_acceptor_id_set.clear();
+            prepare();
+        }
     }
 
     void onPrepareResponse(PrepareResponse prepareResponse) {
-        Instance instance = instance_record.get(prepareResponse.getInstance());
+        if(prepareResponse.getInstance()!=current_instance)
+            return;
         if (instance.instance_state != Instance_State.prepare)
             return;
         if (instance.ballot != prepareResponse.getBallot()) {
             return;
         }
-
-
         if (prepareResponse.isOk()) {
             instance.prepare_acceptor_id_set.add(prepareResponse.getAcceptor_id());
 
             //V是所有的响应中编号最大的提案的Value。如果所有的响应中都没有提案，那么此时V就可以由Proposer自己选择。
-            //没必要重复提交相同的V，所以new_instance
+            //这里不能立即结束，尽管已经确定了值，还要提交这个值
+            //1.因为可能proposer以为之前ballot没提交成功（prepareresponse丢失或超时），实际上大多数Acceptor已经accept,如果这里立即结束开始下一个instance，就会造成下一个instance重复提交这个value
+            //2.还有可能value只被少部分acceptor接收，实际上没有成功提交，所以需要重复提交一次
+
+            //为什么要取编号最大的value
+            //可能有一些value只被少部分acceptor接收，后面有一些更大编号的value prepare的时候没经过这些少部分acceptor，所以选了新的值。
             if (prepareResponse.getAccept_ballot() > instance.accept_ballot) {
                 instance.accept_ballot = prepareResponse.getAccept_ballot();
-                instance.instance_state = Instance_State.finish;
-                new_instance();
-                return;
+                instance.value=prepareResponse.getValue();
             }
 
             if (instance.prepare_acceptor_id_set.size() >= (nodeSet.getNodes().size() / 2 + 1)) {
-                assert instance.accept_ballot==0;
-                accept(prepareResponse.getInstance());
+                accept();
             }
         }
 
     }
 
-    void accept(int instance_idx) {
-        Instance instance = instance_record.get(instance_idx);
+    void accept() {
         instance.instance_state = Instance_State.accept;
-        instance.value = submiting_value;
-        assert instance.value != null;
+
+        if(instance.value==null){
+            assert submiting_value != null;
+            instance.value = submiting_value;
+        }
 
         AcceptRequest acceptRequest = new AcceptRequest();
         acceptRequest.setProposer_id(proposer_id);
-        acceptRequest.setInstance(instance_idx);
+        acceptRequest.setInstance(current_instance);
         acceptRequest.setBallot(instance.ballot);
         acceptRequest.setValue(instance.value);
 
         this.netUtil.boardcast(Role.Acceptor, PacketType.AcceptRequest, acceptRequest);
 
-        delay_exec(new TimerTask() {
-            @Override
-            public void run() {
-                if (instance.instance_state == Instance_State.accept) {
-                    instance.ballot++;
-                    instance.prepare_acceptor_id_set.clear();
-                    instance.accept_acceptor_id_set.clear();
-                    prepare(instance_idx);
-                }
-            }
-        });
+        delay_exec(DelayExecRecord.EventType.AcceptCheck,current_instance);
+    }
+
+    void accept_delay(int instance_idx){
+        if(instance_idx!=current_instance)
+            return;
+
+        if (instance.instance_state == Instance_State.accept) {
+            instance.ballot++;
+            instance.prepare_acceptor_id_set.clear();
+            instance.accept_acceptor_id_set.clear();
+            prepare();
+        }
     }
 
     void onAcceptResponse(AcceptResponse acceptResponse) {
-        Instance instance = instance_record.get(acceptResponse.getInstance());
+        if(acceptResponse.getInstance()!=current_instance)
+            return;
         if (instance.instance_state != Instance_State.accept) {
             return;
         }
@@ -183,25 +211,23 @@ public class Proposer {
         }
         if (acceptResponse.isOk()) {
             instance.accept_acceptor_id_set.add(acceptResponse.getAcceptor_id());
-
             if (instance.accept_acceptor_id_set.size() >= (nodeSet.getNodes().size() / 2 + 1)) {
 
                 instance.instance_state = Instance_State.finish;
 
-                System.out.println(acceptResponse);
-                System.out.println(instance.value);
-
-                submiting_value = null;
-                submit_success_semaphore.release();
-
-
+                if(submiting_value.equals(instance.value))
+                    submiting_value = null;
             }
         }
     }
 
+    void delay_exec(DelayExecRecord.EventType eventType, int instance_id) {
+        delayExecRecord.add_time_record(delay, eventType,instance_id);
+    }
 
 
     void handle_packet(Packet packet) {
+        System.out.println(packet);
         switch (packet.getType()) {
             case PrepareResponse:
                 onPrepareResponse((PrepareResponse) packet.getData());
@@ -212,8 +238,10 @@ public class Proposer {
                 break;
 
             case SubmitValue:
-                BlockingQueue queue = (BlockingQueue) packet.getData();
-                queue.drainTo(wait_to_submit_value_queue);
+                Value value = (Value) packet.getData();
+                wait_to_submit_value_queue.add(value);
+                System.out.println("wait_to_submit_value_queue");
+                System.out.println(wait_to_submit_value_queue.size());
                 break;
         }
 

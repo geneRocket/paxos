@@ -17,7 +17,7 @@ public class Acceptor {
     static class Instance{
         int prepare_ballot;
         int accept_ballot =0;
-        Object value=null;
+        Value value=null;
 
         public Instance(int prepare_ballot){
             this.prepare_ballot = prepare_ballot;
@@ -96,7 +96,7 @@ public class Acceptor {
 
     }
 
-    void sendLearnResponse(int acceptor_id,int instance,Object value){
+    void sendLearnResponse(int acceptor_id,int instance,Value value){
         LearnResponse learnResponse=new LearnResponse();
         learnResponse.setAcceptor_id(acceptor_id);
         learnResponse.setInstance(instance);

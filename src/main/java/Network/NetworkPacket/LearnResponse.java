@@ -12,5 +12,5 @@ import java.io.Serializable;
 public class LearnResponse implements Serializable {
     int acceptor_id;
     int instance;
-    Object value;
+    Value value;
 }

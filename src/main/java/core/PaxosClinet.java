@@ -3,20 +3,21 @@ package core;
 import Network.NetworkPacket.Packet;
 import Network.NetworkPacket.PacketType;
 import Network.NetworkPacket.Role;
+import Network.NetworkPacket.Value;
 import Network.NioSend;
 import Network.Send;
 import conf.Node;
 import conf.NodeSet;
 
 import java.io.IOException;
-import java.util.Random;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
 public class PaxosClinet {
     Send send;
     BlockingQueue<Object> msg_queue = new LinkedBlockingQueue<>();
-    int BUFFER_SIZE=20;
+    int BUFFER_SIZE=1;
 
     NodeSet nodeSet;
 
@@ -37,10 +38,12 @@ public class PaxosClinet {
         if(msg_queue.size()==0)
             return;
 
+
         Packet packet =  new Packet();
         packet.setReceive_role(Role.Proposer);
         packet.setType(PacketType.SubmitValue);
-        packet.setData(msg_queue);
+        Value value=new Value(UUID.randomUUID(),msg_queue);
+        packet.setData(value);
         Node node=nodeSet.getNodes().get(0);
 
         try {
