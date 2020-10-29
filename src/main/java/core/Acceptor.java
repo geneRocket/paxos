@@ -16,7 +16,7 @@ public class Acceptor {
 
     static class Instance{
         int prepare_ballot;
-        int accept_ballot =0;
+        int accept_ballot=0;
         Value value=null;
 
         public Instance(int prepare_ballot){
@@ -90,6 +90,13 @@ public class Acceptor {
             instance.value=acceptRequest.getValue();
             instance.prepare_ballot=acceptRequest.getBallot();
             instance.accept_ballot=acceptRequest.getBallot();
+
+            //multi-paxos
+            if(!instance_record.containsKey(acceptRequest.getInstance()+1)){
+                Instance next_instance= new Instance(1);
+                instance_record.put(acceptRequest.getInstance()+1,next_instance);
+            }
+
             responseAccept(acceptRequest.getProposer_id(),acceptRequest.getInstance(),instance.prepare_ballot,true);
             sendLearnResponse(acceptor_id,acceptRequest.getInstance(),acceptRequest.getValue());
         }

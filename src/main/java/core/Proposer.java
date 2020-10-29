@@ -30,6 +30,8 @@ public class Proposer {
     int current_instance = 0;
     Instance instance= new Instance();
 
+    boolean is_last_success_accept=false;
+
     public Proposer(int id, NodeSet nodeSet,NetUtil netUtil) throws IOException {
         this.proposer_id = id;
         this.nodeSet = nodeSet;
@@ -94,6 +96,8 @@ public class Proposer {
         Value value;
         Set<Integer> accept_acceptor_id_set = new HashSet<>();
 
+        boolean is_new_value;
+
         public Instance() {
             reset();
         }
@@ -105,6 +109,7 @@ public class Proposer {
             accept_ballot = 0;
             value=null;
             accept_acceptor_id_set.clear();
+            is_new_value=false;
         }
     }
 
@@ -113,7 +118,11 @@ public class Proposer {
         this.current_instance++;
         instance.reset();
         instance.instance_state = Instance_State.prepare;
-        prepare();
+        if(!is_last_success_accept)
+            prepare();
+        else {
+            accept();
+        }
     }
 
     void prepare() {
@@ -175,6 +184,7 @@ public class Proposer {
         if(instance.value==null){
             assert submiting_value != null;
             instance.value = submiting_value;
+            instance.is_new_value=true;
         }
 
         AcceptRequest acceptRequest = new AcceptRequest();
@@ -212,11 +222,14 @@ public class Proposer {
         if (acceptResponse.isOk()) {
             instance.accept_acceptor_id_set.add(acceptResponse.getAcceptor_id());
             if (instance.accept_acceptor_id_set.size() >= (nodeSet.getNodes().size() / 2 + 1)) {
-
                 instance.instance_state = Instance_State.finish;
 
-                if(submiting_value.equals(instance.value))
+                //可能之前提交只有少部分acceptor接收了，或者acceptResponse丢失了，所以不一定是new_value
+                if(submiting_value.equals(instance.value)){
                     submiting_value = null;
+                }
+
+                is_last_success_accept= instance.is_new_value;
             }
         }
     }
