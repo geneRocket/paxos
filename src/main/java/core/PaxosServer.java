@@ -25,7 +25,7 @@ public class PaxosServer {
         netUtil=new NetUtil(nodeSet,new NioSend());
         proposer = new Proposer(id,nodeSet,netUtil);
         acceptor = new Acceptor(id,netUtil);
-        learner=new Learner(id,nodeSet,acceptor,stateMachineCallback);
+        learner=new Learner(id,nodeSet,acceptor,stateMachineCallback,netUtil);
 
         Node node=nodeSet.getNodes().get(id);
         recv=new NioRecv(node.getIp(),node.getPort());

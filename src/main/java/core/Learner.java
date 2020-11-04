@@ -16,7 +16,7 @@ public class Learner {
     NodeSet nodeSet;
 
     BlockingQueue<Packet> packet_queue = new LinkedBlockingQueue<>();
-    Send send = new NioSend();
+    NetUtil netUtil;
 
     Acceptor acceptor;
     StateMachineCallback stateMachineCallback;
@@ -27,11 +27,12 @@ public class Learner {
 
     int current_instance=1;
 
-    public Learner(int id, NodeSet nodeSet,Acceptor acceptor,StateMachineCallback stateMachineCallback) throws IOException {
+    public Learner(int id, NodeSet nodeSet,Acceptor acceptor,StateMachineCallback stateMachineCallback,NetUtil netUtil) throws IOException {
         this.learner_id = id;
         this.nodeSet = nodeSet;
         this.acceptor=acceptor;
         this.stateMachineCallback=stateMachineCallback;
+        this.netUtil=netUtil;
 
         new Thread(() -> {
             while (true) {
@@ -45,7 +46,6 @@ public class Learner {
         }).start();
     }
 
-
     void onLearnRequest(LearnRequest learnRequest){
         if(acceptor.instance_record.containsKey(learnRequest.getInstance())
             && acceptor.instance_record.get(learnRequest.getInstance()).value!=null){
@@ -54,12 +54,7 @@ public class Learner {
             learnResponse.setInstance(learnRequest.getInstance());
             learnResponse.setAcceptor_id(acceptor.acceptor_id);
 
-            Node node=nodeSet.getNodes().get(learnRequest.getLearner_id());
-            try {
-                send.send_to(node.getIp(),node.getPort(),learnResponse);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            netUtil.send_to(learnRequest.getLearner_id(),Role.Learner,PacketType.LearnResponse,learnResponse);
         }
     }
 

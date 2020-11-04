@@ -1,8 +1,7 @@
 package Network;
 
-import java.io.ByteArrayOutputStream;
+
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
@@ -13,17 +12,33 @@ import java.nio.channels.SocketChannel;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
 public class NioRecv implements Recv {
     String ip;
     int port;
+
     Selector selector ;
     ServerSocketChannel serverSocketChannel;
-    private Map<SocketChannel, ByteArrayOutputStream> buffer_map = new HashMap<>();
-    ByteBuffer byteBuffer = ByteBuffer.allocate(1024);
+
+    final static int int_size=4;
+    static class Buffer{
+        ByteBuffer byteBuffer;
+        boolean is_reading_len;
+
+        public Buffer(){
+            reset();
+        }
+
+        void reset(){
+            byteBuffer=ByteBuffer.allocate(int_size);
+            is_reading_len=true;
+        }
+    }
+
+    private Map<SocketChannel, Buffer> buffer_map = new HashMap<>();
+
     BlockingQueue<byte[]> msg_queue= new LinkedBlockingQueue<>();
 
     public NioRecv(String ip,int port) throws IOException {
@@ -60,8 +75,14 @@ public class NioRecv implements Recv {
                         }
                         else if(selectionKey.isReadable()){
                             SocketChannel socketChannel=(SocketChannel)selectionKey.channel();
-                            if(read_data(socketChannel)==-1)
+                            if(!read_data(socketChannel)){
+                                try {
+                                    socketChannel.close();
+                                } catch (IOException e) {
+                                    e.printStackTrace();
+                                }
                                 selectionKey.cancel();
+                            }
                         }
                     }
 
@@ -70,30 +91,41 @@ public class NioRecv implements Recv {
         }).start();
     }
 
-    int read_data(SocketChannel socketChannel){
+    boolean read_data(SocketChannel socketChannel) {
+        if(!buffer_map.containsKey(socketChannel)){
+            buffer_map.put(socketChannel,new Buffer());
+        }
+        Buffer buffer=buffer_map.get(socketChannel);
+        assert buffer.byteBuffer.remaining()>0;
+
         try {
-            int len=socketChannel.read(byteBuffer);
+            int len=socketChannel.read(buffer.byteBuffer);
             if(len==-1){
-                ByteArrayOutputStream byteArrayOutputStream=buffer_map.get(socketChannel);
-                if(byteArrayOutputStream.size()>0){
-                    msg_queue.add(byteArrayOutputStream.toByteArray());
-                }
                 buffer_map.remove(socketChannel);
-                socketChannel.close();
-                return -1;
+                return false;
             }
-            if(!buffer_map.containsKey(socketChannel)){
-                buffer_map.put(socketChannel,new ByteArrayOutputStream());
-            }
-            byteBuffer.flip();
-            buffer_map.get(socketChannel).write(byteBuffer.array());
-            byteBuffer.clear();
-            return len;
         } catch (IOException e) {
             e.printStackTrace();
         }
 
-        return -1;
+        if(buffer.byteBuffer.remaining()==0){
+            buffer.byteBuffer.flip();
+
+            if(buffer.is_reading_len){
+                buffer.is_reading_len=false;
+                int packet_len=buffer.byteBuffer.getInt();
+                buffer.byteBuffer= ByteBuffer.allocate(packet_len);
+            }
+            else {
+                try {
+                    msg_queue.put(buffer.byteBuffer.array());
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                buffer.reset();
+            }
+        }
+        return true;
     }
 
     void handle_accept() throws IOException {

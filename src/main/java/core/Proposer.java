@@ -253,8 +253,6 @@ public class Proposer {
             case SubmitValue:
                 Value value = (Value) packet.getData();
                 wait_to_submit_value_queue.add(value);
-                System.out.println("wait_to_submit_value_queue");
-                System.out.println(wait_to_submit_value_queue.size());
                 break;
         }
 

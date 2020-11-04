@@ -26,5 +26,4 @@ public interface Send {
 
         send_to(ip,port,bytes);
     }
-
 }
