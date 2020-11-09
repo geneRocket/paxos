@@ -41,3 +41,6 @@ tcp由于是流协议，需要拆包分包，通过在消息前加上长度来�
 
 把要发送的数据包缓存在一个队列里，然后主线程不停读取发送
 
+# 学习模仿
+https://github.com/luohaha/MyPaxos
+https://github.com/Tencent/phxpaxos
